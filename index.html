@@ -13,7 +13,21 @@
 <title>Villa</title>
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icon-512.png">
+<link rel="manifest" href="manifest.webmanifest">
 <style>
+  /* "Turn on notifications" card (lives on this page because iPhones only allow it here) */
+  #bell { position: fixed; z-index: 5; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 10px); max-width: 460px; margin: 0 auto;
+    background: #FFFFFF; color: #2E2622; border-radius: 22px; padding: 16px 16px 14px; box-shadow: 0 18px 48px rgba(90, 40, 60, .28);
+    font: 15px/1.4 -apple-system, system-ui, sans-serif; transform: translateY(-140%); transition: transform .45s cubic-bezier(.2, .9, .3, 1.15); }
+  #bell.show { transform: none; }
+  #bell b { display: block; font: 600 18px/1.25 Georgia, serif; margin-bottom: 3px; }
+  #bell p { margin: 0 0 12px; color: #6F625A; }
+  #bell .row { display: flex; gap: 8px; }
+  #bell button { flex: 1; border: 0; border-radius: 999px; padding: 12px 10px; font: 600 15px -apple-system, system-ui, sans-serif; cursor: pointer; }
+  #bell .yes { background: linear-gradient(135deg, #F7A3B8, #E5738F); color: #fff; }
+  #bell .no { background: #F5EEE6; color: #6F625A; }
+  @media (prefers-color-scheme: dark) { #bell { background: #2B2023; color: #F4ECE5; } #bell p { color: #CDB3AB; } #bell .no { background: #3A2C30; color: #CDB3AB; } }
+
   html, body { margin: 0; height: 100%; overflow: hidden; background: #FBF1EE; }
   body { transition: background-color .6s ease; }
   /* Villa itself, full screen (below the clock/battery strip) */
@@ -50,6 +64,11 @@
       <div class="d-msg" id="msg">Open this page with your personal Villa link once, then add it to your Home Screen.</div>
     </div>
   </div>
+  <div id="bell" role="dialog" aria-live="polite">
+    <b id="bell-t">🔔 Villa notifications?</b>
+    <p id="bell-p">Date reminders, when bae adds something, cycle heads-ups and a good-morning summary, right on this phone.</p>
+    <div class="row" id="bell-row"><button class="no" id="bell-no" type="button">Not now</button><button class="yes" id="bell-yes" type="button">Turn on</button></div>
+  </div>
   <iframe id="villa" title="Villa" allow="clipboard-read; clipboard-write; geolocation; fullscreen"></iframe>
   <script>
   (function () {
@@ -61,15 +80,88 @@
     try { if (key) localStorage.setItem(KEY_STORE, key); else key = localStorage.getItem(KEY_STORE) || ''; } catch (e) { }
     var door = document.getElementById('door'), frame = document.getElementById('villa');
     if (!key) { document.querySelector('.d-dots').style.display = 'none'; document.getElementById('msg').style.display = 'block'; return; }
-    function reveal() { frame.classList.add('ready'); door.classList.add('gone'); }
+    var revealed = false;
+    function reveal() { if (revealed) return; revealed = true; frame.classList.add('ready'); door.classList.add('gone'); setTimeout(autoBell, 5000); }
     frame.addEventListener('load', function () { setTimeout(reveal, 250); });
     setTimeout(reveal, 12000);
     frame.src = EXEC + '?k=' + encodeURIComponent(key);
     // Villa tells us its top (sky) and bottom colors so the clock strip matches.
     window.addEventListener('message', function (e) {
       var d = e.data;
-      if (!d || d.villa !== 'colors') return;
+      if (!d) return;
+      if (d.villa === 'push-prompt') { openBell(true); return; }
+      if (d.villa !== 'colors') return;
       if (d.top && /^(#[0-9a-f]{3,8}|rgb\([\d,\s]+\))$/i.test(d.top)) document.body.style.backgroundColor = d.top;
+    });
+
+    /* ---------- Phone notifications ---------- */
+    var bell = document.getElementById('bell'), bellT = document.getElementById('bell-t'), bellP = document.getElementById('bell-p');
+    var bellYes = document.getElementById('bell-yes'), bellNo = document.getElementById('bell-no');
+    var standalone = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+    var canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    var vapidKey = '';
+    var swReady = canPush ? navigator.serviceWorker.register('sw.js').then(function () { return navigator.serviceWorker.ready; }) : null;
+    function getVapid() {
+      return vapidKey ? Promise.resolve(vapidKey) : fetch(EXEC + '?vapid=1', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { vapidKey = j.key; return vapidKey; });
+    }
+    function b64uToBytes(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; var bin = atob(s), out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+    function strToB64u(str) { return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+    function say(t, p, buttons) { bellT.textContent = t; bellP.textContent = p; document.getElementById('bell-row').style.display = buttons ? 'flex' : 'none'; bell.classList.add('show'); if (!buttons) setTimeout(function () { bell.classList.remove('show'); }, 5000); }
+    function saveSub(sub) {
+      var j = sub.toJSON(), data = strToB64u(JSON.stringify({ endpoint: j.endpoint, keys: j.keys }));
+      return fetch(EXEC + '?pushsub=' + data + '&k=' + key + '&ua=' + encodeURIComponent(navigator.userAgent.slice(0, 100)), { cache: 'no-store' })
+        .then(function (r) { return r.json(); }).then(function (res) {
+          if (!res || !res.ok) throw new Error(res && res.error || 'save');
+          try { localStorage.setItem('villa-push-saved', String(Date.now())); } catch (e) { }
+          return res;
+        });
+    }
+    function subscribe() {
+      return Promise.all([swReady, getVapid()]).then(function (v) {
+        var reg = v[0];
+        return reg.pushManager.getSubscription().then(function (s) {
+          return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(v[1]) });
+        });
+      }).then(saveSub);
+    }
+    function openBell(fromVilla) {
+      if (!canPush || !standalone) {
+        if (fromVilla) say('📲 One quick thing', 'Open Villa from its home-screen icon (not a Safari tab), then turn notifications on from there.', false);
+        return;
+      }
+      if (Notification.permission === 'denied') { say('🔕 Notifications are off', 'Turn them on in iPhone Settings ▸ Notifications ▸ Villa.', false); return; }
+      if (Notification.permission === 'granted') { say('💕 Notifications are on', 'Sending a test to this phone…', false); subscribe().catch(function () { say('Hmm, that didn’t work', 'Try again in a minute.', false); }); return; }
+      getVapid().catch(function () { });
+      bellT.textContent = '🔔 Villa notifications?';
+      bellP.textContent = 'Date reminders, when bae adds something, cycle heads-ups and a good-morning summary, right on this phone.';
+      document.getElementById('bell-row').style.display = 'flex';
+      bell.classList.add('show');
+    }
+    function autoBell() {
+      if (!canPush || !standalone) return;
+      if (Notification.permission === 'granted') {
+        // keep this phone registered (quietly re-saves about once a week)
+        var last = 0; try { last = +localStorage.getItem('villa-push-saved') || 0; } catch (e) { }
+        if (Date.now() - last > 7 * 86400000) subscribe().catch(function () { });
+        return;
+      }
+      if (Notification.permission !== 'default') return;
+      var later = 0; try { later = +localStorage.getItem('villa-push-later') || 0; } catch (e) { }
+      if (Date.now() - later < 3 * 86400000) return;
+      openBell(false);
+    }
+    bellNo.addEventListener('click', function () { bell.classList.remove('show'); try { localStorage.setItem('villa-push-later', String(Date.now())); } catch (e) { } });
+    bellYes.addEventListener('click', function () {
+      // iPhone only allows this right inside the tap
+      var ask = Notification.requestPermission();
+      bellYes.textContent = 'One sec…';
+      Promise.resolve(ask).then(function (perm) {
+        if (perm !== 'granted') { bellYes.textContent = 'Turn on'; say('🔕 No worries', 'You can turn them on later in Villa ▸ Phone notifications.', false); return; }
+        return subscribe().then(function () {
+          bellYes.textContent = 'Turn on';
+          say('You’re all set 💕', 'A test notification is on its way.', false);
+        });
+      }).catch(function () { bellYes.textContent = 'Turn on'; say('Hmm, that didn’t work', 'Try again from Villa ▸ Phone notifications.', false); });
     });
   })();
   </script>
