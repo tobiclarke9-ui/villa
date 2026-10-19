@@ -83,28 +83,113 @@
     if (!key) { document.querySelector('.d-dots').style.display = 'none'; document.getElementById('msg').style.display = 'block'; return; }
     var revealed = false;
     function reveal() { if (revealed) return; revealed = true; frame.classList.add('ready'); door.classList.add('gone'); setTimeout(autoBell, 5000); }
-    frame.addEventListener('load', function () { setTimeout(reveal, 250); });
-    setTimeout(reveal, 12000);
-    frame.src = EXEC + '?k=' + encodeURIComponent(key);
-    // Villa reports how tall its screen really is. Google's page around Villa can come up shorter than the frame,
-    // which left a gap above the home bar, so we grow the frame by exactly the missing amount (works on any phone).
+    function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
+    var standaloneNow = navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+
+    /* ---- Screen fit: Villa fills from under the clock to the very bottom edge, on any phone ---- */
+    var probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;left:0;top:0;width:1px;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)';
+    document.body.appendChild(probe);
+    function insets() { var cs = getComputedStyle(probe); return { t: parseFloat(cs.paddingTop) || 0, b: parseFloat(cs.paddingBottom) || 0 }; }
+    function screenH() {
+      var h = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
+      // iPhone home-screen apps can report a viewport shorter than the screen; the real screen height is reliable there
+      try { if (standaloneNow && screen.height > screen.width && window.innerWidth < window.innerHeight) h = Math.max(h, screen.height); } catch (e) { }
+      return h;
+    }
+    var direct = false;
+    function layout() {
+      if (!direct) return;
+      var ins = insets(), h = screenH();
+      frame.style.top = ins.t + 'px'; frame.style.bottom = 'auto'; frame.style.height = Math.round(h - ins.t) + 'px';
+      var ts = document.getElementById('topstrip'); if (ts) ts.style.height = ins.t + 'px';
+      try { var de = frame.contentDocument && frame.contentDocument.documentElement; if (de) { de.style.setProperty('--safe-b', ins.b + 'px'); de.style.setProperty('--safe-extra', '0px'); } } catch (e) { }
+    }
+    window.addEventListener('resize', function () { if (direct) layout(); else frame.style.height = ''; });
+    window.addEventListener('orientationchange', function () { setTimeout(layout, 300); });
+
+    /* ---- Direct mode: fetch Villa's page and show it ourselves (no Google frames → no gap, quicker) ---- */
+    var SHELL_STORE = 'villa-shell-v1', touched = false, shownV = '';
+    function shimFor(k) {
+      // stands in for google.script.run: same calls, sent straight to Villa's server
+      return '<script>window.__VILLA_DIRECT__=1;(function(){var EXEC=' + JSON.stringify(EXEC) + ';' +
+        'function runner(ok,fail){return new Proxy({},{get:function(_,name){' +
+        'if(name==="withSuccessHandler")return function(f){return runner(f,fail)};' +
+        'if(name==="withFailureHandler")return function(f){return runner(ok,f)};' +
+        'return function(){var args=Array.prototype.slice.call(arguments),tries=0;' +
+        '(function go(){fetch(EXEC,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn:name,args:args}),cache:"no-store",redirect:"follow"})' +
+        '.then(function(r){if(!r.ok)throw new Error(r.status);return r.json()}).then(function(j){ok&&ok(j)})' +
+        '.catch(function(e){if(++tries<2)return setTimeout(go,600);fail&&fail(e)})})()}}})}' +
+        'window.google={script:{run:runner(null,null)}};})();<\/script>';
+    }
+    function headBits(cached) {
+      var ins = insets();
+      return '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">' +
+        '<style>:root{--safe-b:' + ins.b + 'px!important;--safe-extra:0px!important}</style>' +
+        '<script>window.__VILLA_CACHED__=' + (cached ? 1 : 0) + ';<\/script>' + shimFor(key);
+    }
+    function show(html, cached, v) {
+      direct = true; shownV = v || '';
+      layout();
+      frame.removeAttribute('src');
+      frame.onload = function () {
+        layout(); setTimeout(reveal, 150);
+        try { frame.contentWindow.addEventListener('pointerdown', function () { touched = true; }, true); } catch (e) { }
+      };
+      var hb = headBits(cached); frame.srcdoc = html.replace(/<head>/i, function (m) { return m + hb; });
+    }
+    function legacy() {
+      // fallback: the old way (Villa inside Google's page)
+      direct = false; frame.removeAttribute('srcdoc'); frame.style.top = ''; frame.style.height = ''; frame.style.bottom = '';
+      frame.onload = function () { setTimeout(reveal, 250); };
+      frame.src = EXEC + '?k=' + encodeURIComponent(key);
+    }
+    var cache = null; try { cache = JSON.parse(ls(SHELL_STORE) || 'null'); } catch (e) { cache = null; }
+    if (cache && cache.k !== key) cache = null;
+    if (cache && cache.html) show(cache.html, true, cache.v);
+    var t0 = Date.now(), done = false;
+    var timer = setTimeout(function () { if (!done && !cache) { done = true; legacy(); } }, 20000);
+    fetch(EXEC + '?shell=1&k=' + encodeURIComponent(key), { cache: 'no-store', redirect: 'follow' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok || !j.html) throw new Error('shell');
+        clearTimeout(timer);
+        var isApp = /id="app"/.test(j.html);
+        if (isApp) ls(SHELL_STORE, JSON.stringify({ k: key, v: j.v, html: j.html, at: Date.now() })); else ls(SHELL_STORE, null);
+        if (done) return; // already fell back
+        done = true;
+        // nothing on screen yet, or the saved copy is old code / not Villa and nobody has tapped yet → show the fresh one
+        if (!cache || ((cache.v !== j.v || !isApp) && !touched && Date.now() - t0 < 6000)) show(j.html, false, j.v);
+      })
+      .catch(function () { if (!done && !cache) { done = true; clearTimeout(timer); legacy(); } });
+    setTimeout(reveal, 15000);
+
+    // Villa reports how tall its screen really is (old way only). Google's page around Villa can come up shorter than the frame,
+    // which left a gap above the home bar, so we grow the frame by exactly the missing amount.
     function fitFrame(innerH) {
-      var vh = window.innerHeight;
-      try { if ((navigator.standalone === true || matchMedia('(display-mode: standalone)').matches) && screen.height > screen.width && window.innerWidth < window.innerHeight) vh = Math.max(vh, screen.height); } catch (e) { }
+      if (direct) return;
+      var vh = screenH();
       var r = frame.getBoundingClientRect(), fill = vh - r.top, missing = r.height - innerH;
       var want = Math.round(fill + Math.max(0, missing));
       if (Math.abs(r.height - want) > 1) frame.style.height = want + 'px';
     }
-    window.addEventListener('resize', function () { frame.style.height = ''; });
+    var diagSent = false;
+    function sendDiag(h) {
+      if (diagSent || !direct) return; diagSent = true;
+      var ins = insets(), r = frame.getBoundingClientRect();
+      var d = { door: 2, sa: standaloneNow ? 1 : 0, ih: window.innerHeight, ch: document.documentElement.clientHeight, sh: screen.height, sw: screen.width, sat: ins.t, sab: ins.b, ft: Math.round(r.top), fh: Math.round(r.height), vh: h, ua: navigator.userAgent.slice(0, 120) };
+      fetch(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn: 'villaApi', args: [key, 'diag', d] }) }).catch(function () { });
+    }
     // Villa tells us its top (sky) and bottom colors so the clock strip matches.
     window.addEventListener('message', function (e) {
       var d = e.data;
       if (!d) return;
       if (d.villa === 'push-prompt') { openBell(true); return; }
-      if (d.villa === 'size' && typeof d.h === 'number') { fitFrame(d.h); return; }
+      if (d.villa === 'reload') { ls(SHELL_STORE, null); location.reload(); return; }
+      if (d.villa === 'size' && typeof d.h === 'number') { fitFrame(d.h); setTimeout(function () { sendDiag(d.h); }, 2500); return; }
       if (d.villa !== 'colors') return;
       var ok = function (c) { return c && /^(#[0-9a-f]{3,8}|rgb\([\d,\s]+\))$/i.test(String(c).trim()); };
-      if (ok(d.top)) { var ts = document.getElementById('topstrip'); if (!ts) { ts = document.createElement('div'); ts.id = 'topstrip'; document.body.appendChild(ts); } ts.style.backgroundColor = d.top; }
+      if (ok(d.top)) { var ts = document.getElementById('topstrip'); if (!ts) { ts = document.createElement('div'); ts.id = 'topstrip'; document.body.appendChild(ts); if (direct) layout(); } ts.style.backgroundColor = d.top; }
       if (ok(d.bottom)) document.body.style.backgroundColor = String(d.bottom).trim();
     });
 
