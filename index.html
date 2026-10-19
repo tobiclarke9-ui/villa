@@ -91,11 +91,13 @@
     probe.style.cssText = 'position:fixed;left:0;top:0;width:1px;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)';
     document.body.appendChild(probe);
     function insets() { var cs = getComputedStyle(probe); return { t: parseFloat(cs.paddingTop) || 0, b: parseFloat(cs.paddingBottom) || 0 }; }
-    function screenH() {
-      var h = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
-      // iPhone home-screen apps can report a viewport shorter than the screen; the real screen height is reliable there
-      try { if (standaloneNow && screen.height > screen.width && window.innerWidth < window.innerHeight) h = Math.max(h, screen.height); } catch (e) { }
-      return h;
+    // The part of the screen Villa can actually draw on. (On some iPhones the strip under the home bar isn't drawable;
+    // it just shows a solid color, so Villa ends right above it instead of hiding the tab bar under it.)
+    function screenH() { return window.innerHeight || document.documentElement.clientHeight || 0; }
+    function bottomPad(ins) {
+      // home-bar padding only when Villa really reaches the bottom edge of the glass
+      try { if (standaloneNow && screen.height > screen.width) return Math.max(0, Math.round(ins.b - (screen.height - screenH()))); } catch (e) { }
+      return ins.b;
     }
     var direct = false;
     function layout() {
@@ -103,7 +105,7 @@
       var ins = insets(), h = screenH();
       frame.style.top = ins.t + 'px'; frame.style.bottom = 'auto'; frame.style.height = Math.round(h - ins.t) + 'px';
       var ts = document.getElementById('topstrip'); if (ts) ts.style.height = ins.t + 'px';
-      try { var de = frame.contentDocument && frame.contentDocument.documentElement; if (de) { de.style.setProperty('--safe-b', ins.b + 'px'); de.style.setProperty('--safe-extra', '0px'); } } catch (e) { }
+      try { var de = frame.contentDocument && frame.contentDocument.documentElement; if (de) { de.style.setProperty('--safe-b', bottomPad(ins) + 'px'); de.style.setProperty('--safe-extra', '0px'); } } catch (e) { }
     }
     window.addEventListener('resize', function () { if (direct) layout(); else frame.style.height = ''; });
     window.addEventListener('orientationchange', function () { setTimeout(layout, 300); });
@@ -125,7 +127,7 @@
     function headBits(cached) {
       var ins = insets();
       return '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">' +
-        '<style>:root{--safe-b:' + ins.b + 'px!important;--safe-extra:0px!important}</style>' +
+        '<style>:root{--safe-b:' + bottomPad(ins) + 'px!important;--safe-extra:0px!important}</style>' +
         '<script>window.__VILLA_CACHED__=' + (cached ? 1 : 0) + ';<\/script>' + shimFor(key);
     }
     function show(html, cached, v) {
