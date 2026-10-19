@@ -32,8 +32,7 @@
   body { transition: background-color .6s ease; }
   /* Villa itself, full screen (below the clock/battery strip) */
   #villa { position: fixed; left: 0; right: 0; top: env(safe-area-inset-top, 0px); bottom: 0; width: 100%;
-    height: calc(100vh - env(safe-area-inset-top, 0px)); border: 0; background: transparent; opacity: 0; transition: opacity .5s ease; }
-  @supports (height: 100lvh) { #villa { height: calc(100lvh - env(safe-area-inset-top, 0px)); } }
+    height: calc(100% - env(safe-area-inset-top, 0px)); border: 0; background: transparent; opacity: 0; transition: opacity .5s ease; }
   #topstrip { position: fixed; left: 0; right: 0; top: 0; height: env(safe-area-inset-top, 0px); z-index: 1; transition: background-color .6s ease; }
   #villa.ready { opacity: 1; }
   /* instant pink welcome while Villa wakes up (replaces the black screen) */
