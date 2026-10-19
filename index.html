@@ -86,11 +86,22 @@
     frame.addEventListener('load', function () { setTimeout(reveal, 250); });
     setTimeout(reveal, 12000);
     frame.src = EXEC + '?k=' + encodeURIComponent(key);
+    // Villa reports how tall its screen really is. Google's page around Villa can come up shorter than the frame,
+    // which left a gap above the home bar, so we grow the frame by exactly the missing amount (works on any phone).
+    function fitFrame(innerH) {
+      var vh = window.innerHeight;
+      try { if ((navigator.standalone === true || matchMedia('(display-mode: standalone)').matches) && screen.height > screen.width && window.innerWidth < window.innerHeight) vh = Math.max(vh, screen.height); } catch (e) { }
+      var r = frame.getBoundingClientRect(), fill = vh - r.top, missing = r.height - innerH;
+      var want = Math.round(fill + Math.max(0, missing));
+      if (Math.abs(r.height - want) > 1) frame.style.height = want + 'px';
+    }
+    window.addEventListener('resize', function () { frame.style.height = ''; });
     // Villa tells us its top (sky) and bottom colors so the clock strip matches.
     window.addEventListener('message', function (e) {
       var d = e.data;
       if (!d) return;
       if (d.villa === 'push-prompt') { openBell(true); return; }
+      if (d.villa === 'size' && typeof d.h === 'number') { fitFrame(d.h); return; }
       if (d.villa !== 'colors') return;
       var ok = function (c) { return c && /^(#[0-9a-f]{3,8}|rgb\([\d,\s]+\))$/i.test(String(c).trim()); };
       if (ok(d.top)) { var ts = document.getElementById('topstrip'); if (!ts) { ts = document.createElement('div'); ts.id = 'topstrip'; document.body.appendChild(ts); } ts.style.backgroundColor = d.top; }
