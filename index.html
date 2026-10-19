@@ -32,7 +32,8 @@
   body { transition: background-color .6s ease; }
   /* Villa itself, full screen (below the clock/battery strip) */
   #villa { position: fixed; left: 0; right: 0; top: env(safe-area-inset-top, 0px); bottom: 0; width: 100%;
-    height: calc(100% - env(safe-area-inset-top, 0px)); border: 0; background: transparent; opacity: 0; transition: opacity .5s ease; }
+    height: auto; border: 0; background: transparent; opacity: 0; transition: opacity .5s ease; }
+  #topstrip { position: fixed; left: 0; right: 0; top: 0; height: env(safe-area-inset-top, 0px); z-index: 1; transition: background-color .6s ease; }
   #villa.ready { opacity: 1; }
   /* instant pink welcome while Villa wakes up (replaces the black screen) */
   #door { position: fixed; inset: 0; display: grid; place-items: center; z-index: 2;
@@ -91,7 +92,9 @@
       if (!d) return;
       if (d.villa === 'push-prompt') { openBell(true); return; }
       if (d.villa !== 'colors') return;
-      if (d.top && /^(#[0-9a-f]{3,8}|rgb\([\d,\s]+\))$/i.test(d.top)) document.body.style.backgroundColor = d.top;
+      var ok = function (c) { return c && /^(#[0-9a-f]{3,8}|rgb\([\d,\s]+\))$/i.test(String(c).trim()); };
+      if (ok(d.top)) { var ts = document.getElementById('topstrip'); if (!ts) { ts = document.createElement('div'); ts.id = 'topstrip'; document.body.appendChild(ts); } ts.style.backgroundColor = d.top; }
+      if (ok(d.bottom)) document.body.style.backgroundColor = String(d.bottom).trim();
     });
 
     /* ---------- Phone notifications ---------- */

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Villa · Spotify</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: linear-gradient(160deg, #FDE7EE, #F7C7D5); color: #2E2622; }
+  @media (prefers-color-scheme: dark) { body { background: linear-gradient(160deg, #2A181D, #1A1013); color: #F4ECE5; } .card { background: #241D1F !important; } }
+  .card { width: min(360px, calc(100vw - 32px)); background: #fff; border-radius: 28px; padding: 28px 22px; text-align: center; box-shadow: 0 18px 50px rgba(160, 80, 110, .25); }
+  .rec { width: 110px; height: 110px; margin: 0 auto 14px; border-radius: 50%; background: repeating-radial-gradient(circle, #1E1A1C 0 2px, #2C2629 2px 4px); display: grid; place-items: center; animation: spin 3s linear infinite; box-shadow: 0 8px 20px rgba(0, 0, 0, .25); }
+  .rec i { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, #1ED760, #9BE3B4); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { margin: 0; line-height: 1.45; opacity: .8; }
+  .btn { display: inline-block; margin-top: 18px; padding: 13px 22px; border-radius: 999px; background: #1ED760; color: #0B2A16; font-weight: 800; text-decoration: none; border: 0; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="card"><div class="rec"><i></i></div><h1 id="t">Connecting Spotify…</h1><p id="p">One sec 🎶</p><div id="b"></div></div>
+<script>
+(function () {
+  var EXEC = 'https://script.google.com/macros/s/AKfycbwtf8zbnaFRm1clsb1AYrc0yvfuWB70TKn4iVZ0Y_nJ033oE7E58PYoD9AEC8u__V2bEw/exec';
+  var CLIENT = '91516524a1bd4e12ae463fefc31e5eb4', REDIRECT = location.origin + location.pathname;
+  var T = document.getElementById('t'), P = document.getElementById('p'), B = document.getElementById('b');
+  function say(t, p, btn) { T.textContent = t; P.textContent = p; B.innerHTML = btn || ''; }
+  function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
+  function b64u(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function rand(n) { var a = new Uint8Array(n); crypto.getRandomValues(a); return b64u(a).slice(0, n); }
+  var q = new URLSearchParams(location.search), h = new URLSearchParams(location.hash.slice(1));
+  var key = h.get('k') || ls('villa-door-key') || '';
+  if (h.get('k')) { ls('villa-spot-key', h.get('k')); }
+  key = ls('villa-spot-key') || key;
+
+  if (q.get('error')) { say('No worries 💕', 'Spotify wasn’t connected. You can try again from Villa anytime.'); return; }
+  if (q.get('code')) {
+    if (q.get('state') !== ls('villa-spot-state')) { say('Hmm, that didn’t work', 'Go back to Villa and tap Connect Spotify again.'); return; }
+    var sv = ls('villa-spot-v');
+    say('Almost there…', 'Saving your Spotify to Villa 🎶');
+    fetch(EXEC + '?spotifycode=' + encodeURIComponent(q.get('code')) + '&sv=' + encodeURIComponent(sv) + '&k=' + encodeURIComponent(key), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        ls('villa-spot-v', null); ls('villa-spot-state', null);
+        if (j && j.ok) say('Connected! 🎉', (j.name ? 'Hi ' + j.name + '! ' : '') + 'Your record will spin on Villa’s Home when you play something. You can close this and go back to Villa.',
+          '<a class="btn" href="./">Back to Villa 🏡</a>');
+        else if (j && j.error === 'not_allowed') say('Almost!', 'Spotify needs your account added to the Villa app first. Tell Tobi your Spotify email and try again 💕');
+        else if (j && j.error === 'link') say('Hmm', 'Open this from your own Villa (Villa tab ▸ Connect Spotify).');
+        else say('That didn’t work', 'Spotify said no for now. Try again in a minute from Villa.');
+        history.replaceState(null, '', REDIRECT);
+      }).catch(function () { say('That didn’t work', 'Check your connection and try again from Villa.'); });
+    return;
+  }
+  if (!key) { say('Open this from Villa', 'Go to Villa ▸ Villa tab ▸ 🎶 Connect Spotify.'); return; }
+  // start sign-in (PKCE: no secret needed)
+  var verifier = rand(64), state = rand(16);
+  ls('villa-spot-v', verifier); ls('villa-spot-state', state);
+  crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (d) {
+    var u = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+      client_id: CLIENT, response_type: 'code', redirect_uri: REDIRECT, code_challenge_method: 'S256', code_challenge: b64u(d),
+      scope: 'user-read-currently-playing user-read-recently-played', state: state
+    }).toString();
+    say('Opening Spotify…', 'Log in and tap Agree 💚', '<a class="btn" href="' + u + '">Continue to Spotify</a>');
+    location.replace(u);
+  });
+})();
+</script>
+</body>
+</html>
